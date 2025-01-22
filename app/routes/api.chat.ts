@@ -7,6 +7,11 @@ import SwitchableStream from '~/lib/.server/llm/switchable-stream';
 import type { IProviderSetting } from '~/types/model';
 import { createScopedLogger } from '~/utils/logger';
 
+const CLAUDE_CACHE_TOKENS_MULTIPLIER = {
+  WRITE: 1.25,
+  READ: 0.1,
+};
+
 export async function action(args: ActionFunctionArgs) {
   return chatAction(args);
 }
@@ -32,11 +37,12 @@ function parseCookies(cookieHeader: string): Record<string, string> {
 }
 
 async function chatAction({ context, request }: ActionFunctionArgs) {
-  const { messages, files, promptId, contextOptimization } = await request.json<{
+  const { messages, files, promptId, contextOptimization, isPromptCachingEnabled } = await request.json<{
     messages: Messages;
     files: any;
     promptId?: string;
     contextOptimization: boolean;
+    isPromptCachingEnabled: boolean;
   }>();
 
   const cookieHeader = request.headers.get('Cookie');
@@ -56,13 +62,24 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
   try {
     const options: StreamingOptions = {
       toolChoice: 'none',
-      onFinish: async ({ text: content, finishReason, usage }) => {
+      // eslint-disable-next-line @typescript-eslint/naming-convention
+      onFinish: async ({ text: content, finishReason, usage, experimental_providerMetadata }) => {
         logger.debug('usage', JSON.stringify(usage));
 
+        const cacheUsage = experimental_providerMetadata?.anthropic;
+        console.debug({ cacheUsage });
+
+        const isCacheHit = !!cacheUsage?.cacheReadInputTokens;
+        const isCacheMiss = !!cacheUsage?.cacheCreationInputTokens && !isCacheHit;
+
         if (usage) {
-          cumulativeUsage.completionTokens += usage.completionTokens || 0;
-          cumulativeUsage.promptTokens += usage.promptTokens || 0;
-          cumulativeUsage.totalTokens += usage.totalTokens || 0;
+          cumulativeUsage.completionTokens += Math.round(usage.completionTokens || 0);
+          cumulativeUsage.promptTokens += Math.round(
+            (usage.promptTokens || 0) +
+              ((cacheUsage?.cacheCreationInputTokens as number) || 0) * CLAUDE_CACHE_TOKENS_MULTIPLIER.WRITE +
+              ((cacheUsage?.cacheReadInputTokens as number) || 0) * CLAUDE_CACHE_TOKENS_MULTIPLIER.READ,
+          );
+          cumulativeUsage.totalTokens = cumulativeUsage.completionTokens + cumulativeUsage.promptTokens;
         }
 
         if (finishReason !== 'length') {
@@ -75,6 +92,8 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
                   completionTokens: cumulativeUsage.completionTokens,
                   promptTokens: cumulativeUsage.promptTokens,
                   totalTokens: cumulativeUsage.totalTokens,
+                  isCacheHit,
+                  isCacheMiss,
                 },
               });
             },
@@ -115,6 +134,7 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
           providerSettings,
           promptId,
           contextOptimization,
+          isPromptCachingEnabled,
         });
 
         stream.switchSource(result.toDataStream());
@@ -134,6 +154,7 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
       providerSettings,
       promptId,
       contextOptimization,
+      isPromptCachingEnabled,
     });
 
     (async () => {
