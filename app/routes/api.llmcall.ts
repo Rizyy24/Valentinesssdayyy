@@ -2,11 +2,13 @@ import { type ActionFunctionArgs } from '@remix-run/cloudflare';
 import { streamText } from '~/lib/.server/llm/stream-text';
 import type { IProviderSetting, ProviderInfo } from '~/types/model';
 import { generateText } from 'ai';
+import type { Message } from '~/types/message';
 import { PROVIDER_LIST } from '~/utils/constants';
 import { MAX_TOKENS } from '~/lib/.server/llm/constants';
 import { LLMManager } from '~/lib/modules/llm/manager';
 import type { ModelInfo } from '~/lib/modules/llm/types';
 import { getApiKeysFromCookie, getProviderSettingsFromCookie } from '~/lib/api/cookies';
+import { generateId } from '~/utils/id';
 
 export async function action(args: ActionFunctionArgs) {
   return llmCallAction(args);
@@ -17,7 +19,7 @@ async function getModelList(options: {
   providerSettings?: Record<string, IProviderSetting>;
   serverEnv?: Record<string, string>;
 }) {
-  const llmManager = LLMManager.getInstance(import.meta.env);
+  const llmManager = LLMManager.getInstance(import.meta.env as unknown as Record<string, string>);
   return llmManager.updateModelList(options);
 }
 
@@ -59,9 +61,10 @@ async function llmCallAction({ context, request }: ActionFunctionArgs) {
         },
         messages: [
           {
+            id: generateId(),
             role: 'user',
             content: `${message}`,
-          },
+          } as Message,
         ],
         env: context.cloudflare?.env as any,
         apiKeys,

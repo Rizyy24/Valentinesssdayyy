@@ -3,6 +3,7 @@ import { streamText } from '~/lib/.server/llm/stream-text';
 import { stripIndents } from '~/utils/stripIndent';
 import type { ProviderInfo } from '~/types/model';
 import { getApiKeysFromCookie, getProviderSettingsFromCookie } from '~/lib/api/cookies';
+import { generateId } from '~/utils/id';
 
 export async function action(args: ActionFunctionArgs) {
   return enhancerAction(args);
@@ -41,6 +42,7 @@ async function enhancerAction({ context, request }: ActionFunctionArgs) {
     const result = await streamText({
       messages: [
         {
+          id: generateId(),
           role: 'user',
           content:
             `[Model: ${model}]\n\n[Provider: ${providerName}]\n\n` +
